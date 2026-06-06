@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment — NEVER commit this
+.env
+
+# Rust build artefacts
+src-tauri/target/
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

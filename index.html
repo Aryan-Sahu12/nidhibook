@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="NidhiBook Desktop — secure offline-first business application" />
+    <title>NidhiBook Desktop</title>
+    <link rel="stylesheet" href="/src/assets/style.css" />
+  </head>
+  <body>
+    <!-- Root mount point; app.js injects page HTML here -->
+    <div id="app">
+      <div class="splash">
+        <div class="splash-spinner"></div>
+        <p class="splash-text">Loading…</p>
+      </div>
+    </div>
+
+    <!-- Toast container (always present) -->
+    <div id="toast-container" aria-live="polite"></div>
+
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

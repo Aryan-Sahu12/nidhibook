@@ -1,0 +1,26 @@
+{
+  "name": "nidhibook-desktop",
+  "version": "1.0.0",
+  "description": "NidhiBook Desktop — cross-platform Tauri v2 application with Firebase Auth and SQLite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "build:mac": "tauri build --target aarch64-apple-darwin",
+    "build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "vite:dev": "vite",
+    "vite:build": "vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-sql": "^2.0.0",
+    "firebase": "^10.12.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "vite": "^5.0.0"
+  }
+}
