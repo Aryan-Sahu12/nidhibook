@@ -4,16 +4,16 @@
  */
 
 import {
-    getProducts, searchProducts,
-    createProduct, updateProduct, deleteProduct,
-    getProductById, generateSku,
+  getProducts, searchProducts,
+  createProduct, updateProduct, deleteProduct,
+  getProductById, generateSku,
 } from '../services/db.js';
 import { showToast } from '../components/toast.js';
 
 let debounceTimer = null;
 
 export async function renderInventory(container) {
-    container.innerHTML = `
+  container.innerHTML = `
     <div class="section-header mb-16">
       <div class="search-bar" style="width:320px;">
         <span class="search-icon">🔍</span>
@@ -27,40 +27,40 @@ export async function renderInventory(container) {
     <div id="inv-modal-area"></div>
   `;
 
-    document.getElementById('inv-search').addEventListener('input', (e) => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => loadTable(e.target.value.trim()), 300);
-    });
+  document.getElementById('inv-search').addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => loadTable(e.target.value.trim()), 300);
+  });
 
-    document.getElementById('add-prod-btn').addEventListener('click', () => {
-        openProductModal(null);
-    });
+  document.getElementById('add-prod-btn').addEventListener('click', () => {
+    openProductModal(null);
+  });
 
-    await loadTable('');
+  await loadTable('');
 }
 
 async function loadTable(query) {
-    const area = document.getElementById('inv-table-area');
-    if (!area) return;
-    let products;
-    try {
-        products = query ? await searchProducts(query) : await getProducts();
-    } catch (err) {
-        area.innerHTML = `<div class="empty-state"><p style="color:var(--clr-danger)">${err.message}</p></div>`;
-        return;
-    }
+  const area = document.getElementById('inv-table-area');
+  if (!area) return;
+  let products;
+  try {
+    products = query ? await searchProducts(query) : await getProducts();
+  } catch (err) {
+    area.innerHTML = `<div class="empty-state"><p style="color:var(--clr-danger)">${err.message}</p></div>`;
+    return;
+  }
 
-    if (products.length === 0) {
-        area.innerHTML = `
+  if (products.length === 0) {
+    area.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">📦</div>
         <h3>No products yet</h3>
         <p>Click "Add Product" to add your first item</p>
       </div>`;
-        return;
-    }
+    return;
+  }
 
-    area.innerHTML = `
+  area.innerHTML = `
     <table>
       <thead><tr>
         <th>SKU</th>
@@ -81,40 +81,34 @@ async function loadTable(query) {
             <td>
               <div class="table-actions">
                 <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${p.id}">Edit</button>
-                <button class="btn btn-danger btn-sm" data-action="delete" data-id="${p.id}">Delete</button>
               </div>
             </td>
+
           </tr>
         `).join('')}
       </tbody>
     </table>
   `;
 
-    area.addEventListener('click', async (e) => {
-        const btn = e.target.closest('[data-action]');
-        if (!btn) return;
-        const id = Number(btn.dataset.id);
-        if (btn.dataset.action === 'edit') {
-            const p = await getProductById(id);
-            openProductModal(p);
-        } else if (btn.dataset.action === 'delete') {
-            if (!confirm('Delete this product?')) return;
-            try {
-                await deleteProduct(id);
-                showToast('Product deleted.', 'success');
-                await loadTable(document.getElementById('inv-search')?.value || '');
-            } catch (err) {
-                showToast(err.message, 'error');
-            }
-        }
+  const tbody = area.querySelector('tbody');
+  if (tbody) {
+    tbody.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const id = Number(btn.dataset.id);
+      if (btn.dataset.action === 'edit') {
+        const p = await getProductById(id);
+        openProductModal(p);
+      }
     });
+  }
 }
 
 function openProductModal(product) {
-    const area = document.getElementById('inv-modal-area');
-    const isEdit = !!product;
+  const area = document.getElementById('inv-modal-area');
+  const isEdit = !!product;
 
-    area.innerHTML = `
+  area.innerHTML = `
     <div class="modal-backdrop" id="prod-modal-backdrop">
       <div class="modal" id="prod-modal">
         <div class="modal-header">
@@ -149,61 +143,61 @@ function openProductModal(product) {
     </div>
   `;
 
-    // Live SKU preview
-    if (!isEdit) {
-        document.getElementById('prod-name').addEventListener('input', (e) => {
-            const preview = document.getElementById('sku-preview');
-            if (!document.getElementById('prod-sku').value) {
-                const auto = generateSku(e.target.value || 'PROD');
-                preview.textContent = `Auto SKU: ${auto}`;
-            }
-        });
+  // Live SKU preview
+  if (!isEdit) {
+    document.getElementById('prod-name').addEventListener('input', (e) => {
+      const preview = document.getElementById('sku-preview');
+      if (!document.getElementById('prod-sku').value) {
+        const auto = generateSku(e.target.value || 'PROD');
+        preview.textContent = `Auto SKU: ${auto}`;
+      }
+    });
+  }
+
+  const close = () => { area.innerHTML = ''; };
+  area.querySelector('#prod-modal-close').addEventListener('click', close);
+  area.querySelector('#prod-cancel-btn').addEventListener('click', close);
+  area.querySelector('#prod-modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'prod-modal-backdrop') close();
+  });
+
+  area.querySelector('#prod-submit-btn').addEventListener('click', async () => {
+    const name = document.getElementById('prod-name').value.trim();
+    const errEl = document.getElementById('prod-form-error');
+    if (!name) { showFormError(errEl, 'Product name is required.'); return; }
+
+    const data = {
+      sku: document.getElementById('prod-sku').value.trim(),
+      name,
+      category: document.getElementById('prod-category').value.trim() || null,
+      weight_per_unit: parseFloat(document.getElementById('prod-weight').value) || 0,
+      price_per_unit: parseFloat(document.getElementById('prod-price').value) || 0,
+    };
+
+    const btn = document.getElementById('prod-submit-btn');
+    btn.disabled = true;
+    try {
+      if (isEdit) {
+        await updateProduct(product.id, data);
+        showToast('Product updated.', 'success');
+      } else {
+        const result = await createProduct(data);
+        showToast(`Product created. SKU: ${result.sku}`, 'success');
+      }
+      close();
+      await loadTable(document.getElementById('inv-search')?.value || '');
+    } catch (e) {
+      showFormError(errEl, e.message);
+    } finally {
+      btn.disabled = false;
     }
-
-    const close = () => { area.innerHTML = ''; };
-    area.querySelector('#prod-modal-close').addEventListener('click', close);
-    area.querySelector('#prod-cancel-btn').addEventListener('click', close);
-    area.querySelector('#prod-modal-backdrop').addEventListener('click', (e) => {
-        if (e.target.id === 'prod-modal-backdrop') close();
-    });
-
-    area.querySelector('#prod-submit-btn').addEventListener('click', async () => {
-        const name = document.getElementById('prod-name').value.trim();
-        const errEl = document.getElementById('prod-form-error');
-        if (!name) { showFormError(errEl, 'Product name is required.'); return; }
-
-        const data = {
-            sku: document.getElementById('prod-sku').value.trim(),
-            name,
-            category: document.getElementById('prod-category').value.trim() || null,
-            weight_per_unit: parseFloat(document.getElementById('prod-weight').value) || 0,
-            price_per_unit: parseFloat(document.getElementById('prod-price').value) || 0,
-        };
-
-        const btn = document.getElementById('prod-submit-btn');
-        btn.disabled = true;
-        try {
-            if (isEdit) {
-                await updateProduct(product.id, data);
-                showToast('Product updated.', 'success');
-            } else {
-                const result = await createProduct(data);
-                showToast(`Product created. SKU: ${result.sku}`, 'success');
-            }
-            close();
-            await loadTable(document.getElementById('inv-search')?.value || '');
-        } catch (e) {
-            showFormError(errEl, e.message);
-        } finally {
-            btn.disabled = false;
-        }
-    });
+  });
 }
 
 function showFormError(el, msg) {
-    el.textContent = msg;
-    el.classList.add('visible');
-    setTimeout(() => el.classList.remove('visible'), 4000);
+  el.textContent = msg;
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 4000);
 }
 
 function fmt(v) { return Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }

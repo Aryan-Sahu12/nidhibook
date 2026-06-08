@@ -1,6 +1,7 @@
 /**
  * pages/dashboard.js
- * Executive dashboard: KPI cards, top debtors, top purchasers.
+ * Analytics dashboard: KPI cards, top debtors, top purchasers.
+ * (Home page handles company branding + recent activity.)
  */
 
 import {
@@ -8,8 +9,6 @@ import {
   getTopDebtors,
   getTopPurchasers,
 } from '../services/db.js';
-import { openTransactionModal } from './transactionModal.js';
-import { navigateTo } from '../components/shell.js';
 
 export async function renderDashboard(container) {
   container.innerHTML = `<div class="splash"><div class="splash-spinner"></div></div>`;
@@ -28,18 +27,18 @@ export async function renderDashboard(container) {
 
   container.innerHTML = `
     <!-- KPI Grid -->
-    <div class="kpi-grid">
+    <div class="kpi-grid mb-24">
       ${kpiCard('Total Revenue', formatCurrency(stats.revenue), '💰', 'rgba(20,184,166,0.12)', 'var(--clr-primary)')}
       ${kpiCard('Outstanding Debt', formatCurrency(stats.outstandingDebt), '🔴', 'rgba(225,29,72,0.12)', 'var(--clr-rose)')}
       ${kpiCard('Cash Collected', formatCurrency(stats.cashCollected), '✅', 'rgba(16,185,129,0.12)', 'var(--clr-emerald)')}
     </div>
 
-    <!-- Two columns: Debtors + Purchasers -->
+    <!-- Leaderboards -->
     <div class="two-col">
 
       <!-- Top Debtors -->
       <div class="card">
-        <div class="section-header">
+        <div class="section-header mb-16">
           <h3>🔴 Top Debtors</h3>
           <span class="badge badge-rose">${debtors.length} customers</span>
         </div>
@@ -48,16 +47,13 @@ export async function renderDashboard(container) {
       : `<div class="table-wrapper">
               <table>
                 <thead><tr>
-                  <th>Customer</th>
-                  <th>Phone</th>
+                  <th>Customer</th><th>Phone</th>
                   <th style="text-align:right">Balance Due</th>
                 </tr></thead>
-                <tbody id="debtors-tbody">
+                <tbody>
                   ${debtors.map(c => `
-                    <tr class="debtor-row" data-id="${c.id}" style="cursor:pointer">
-                      <td>
-                        <div class="fw-bold">${esc(c.name)}</div>
-                      </td>
+                    <tr>
+                      <td class="fw-bold">${esc(c.name)}</td>
                       <td class="text-muted">${esc(c.phone)}</td>
                       <td style="text-align:right">
                         <span class="badge badge-rose">₹${fmt(c.balance)}</span>
@@ -72,7 +68,7 @@ export async function renderDashboard(container) {
 
       <!-- Top Purchasers -->
       <div class="card">
-        <div class="section-header">
+        <div class="section-header mb-16">
           <h3>⭐ Top Purchasers</h3>
           <span class="badge badge-primary">${purchasers.length} customers</span>
         </div>
@@ -81,13 +77,12 @@ export async function renderDashboard(container) {
       : `<div class="table-wrapper">
               <table>
                 <thead><tr>
-                  <th>Customer</th>
-                  <th>Phone</th>
+                  <th>Customer</th><th>Phone</th>
                   <th style="text-align:right">Lifetime Spend</th>
                 </tr></thead>
                 <tbody>
                   ${purchasers.filter(c => c.lifetime_spend > 0).map((c, i) => `
-                    <tr class="purchaser-row" data-id="${c.id}" style="cursor:pointer">
+                    <tr>
                       <td>
                         <div style="display:flex;align-items:center;gap:10px;">
                           <div style="width:28px;height:28px;border-radius:8px;
@@ -111,14 +106,9 @@ export async function renderDashboard(container) {
       </div>
     </div>
   `;
-
-  // Click debtor/purchaser → navigate to customer profile
-  container.querySelectorAll('.debtor-row, .purchaser-row').forEach(row => {
-    row.addEventListener('click', () => {
-      navigateTo('customers');
-    });
-  });
 }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function kpiCard(label, metric, icon, bg, color) {
   return `

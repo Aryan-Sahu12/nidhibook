@@ -290,9 +290,9 @@ export async function deleteProduct(id) {
  */
 export async function createSaleTransaction(data) {
   _assertDb();
+  // Note: tauri-plugin-sql auto-commits each execute(); manual BEGIN/COMMIT throws
+  // "no transaction is active". We run operations sequentially instead.
   try {
-    await db.execute('BEGIN');
-
     const txResult = await db.execute(
       `INSERT INTO transactions
         (customer_id, type, total_weight, subtotal, global_discount, final_cost,
@@ -327,16 +327,13 @@ export async function createSaleTransaction(data) {
       );
     }
 
-    // Atomic balance increment
     await db.execute(
       'UPDATE customers SET balance = balance + $1 WHERE id = $2',
       [data.dueAmount || 0, data.customerId]
     );
 
-    await db.execute('COMMIT');
     return txId;
   } catch (err) {
-    try { await db.execute('ROLLBACK'); } catch (_) {}
     throw new Error(`Sale transaction failed: ${err.message || err}`);
   }
 }
@@ -351,8 +348,6 @@ export async function createSaleTransaction(data) {
 export async function createSettlementTransaction(data) {
   _assertDb();
   try {
-    await db.execute('BEGIN');
-
     const txResult = await db.execute(
       `INSERT INTO transactions
         (customer_id, type, amount_paid, notes)
@@ -362,16 +357,13 @@ export async function createSettlementTransaction(data) {
 
     const txId = txResult.lastInsertId;
 
-    // Atomic balance decrement (floor at 0)
     await db.execute(
       'UPDATE customers SET balance = MAX(0, balance - $1) WHERE id = $2',
       [data.amountPaid || 0, data.customerId]
     );
 
-    await db.execute('COMMIT');
     return txId;
   } catch (err) {
-    try { await db.execute('ROLLBACK'); } catch (_) {}
     throw new Error(`Settlement transaction failed: ${err.message || err}`);
   }
 }
@@ -498,3 +490,44 @@ export async function getCustomerLifetimeSpend(customerId) {
   );
   return rows[0].total;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOME PAGE QUERIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Recent transactions (latest N), joined with customer name.
+ */
+export async function getRecentTransactions(limit = 8) {
+  _assertDb();
+  return db.select(
+    `SELECT t.id, t.type, t.final_cost, t.amount_paid, t.due_amount, t.created_at,
+            c.name AS customer_name
+     FROM transactions t
+     JOIN customers c ON c.id = t.customer_id
+     ORDER BY t.created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+}
+
+/**
+ * Products sold in recent transactions, aggregated.
+ */
+export async function getRecentlySoldProducts(limit = 8) {
+  _assertDb();
+  return db.select(
+    `SELECT p.id, p.name, p.sku,
+            SUM(ti.quantity) AS total_qty,
+            MAX(t.created_at) AS last_sold_at
+     FROM transaction_items ti
+     JOIN products p ON p.id = ti.product_id
+     JOIN transactions t ON t.id = ti.transaction_id
+     WHERE t.type = 'SALE'
+     GROUP BY p.id
+     ORDER BY last_sold_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+}
+
