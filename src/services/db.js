@@ -88,6 +88,18 @@ export async function initDb() {
       );
     `);
 
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS activity_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        action      TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id   INTEGER,
+        entity_name TEXT,
+        details     TEXT,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+      );
+    `);
+
     console.info('[DB] All tables initialized.');
   } catch (err) {
     console.error('[DB] Init failed:', err);
@@ -106,7 +118,8 @@ function _assertDb() {
 export async function createUser(name, email) {
   _assertDb();
   try {
-    return await db.execute('INSERT INTO users_local (name, email) VALUES ($1, $2)', [name.trim(), email.trim().toLowerCase()]);
+    const r = await db.execute('INSERT INTO users_local (name, email) VALUES ($1, $2)', [name.trim(), email.trim().toLowerCase()]);
+    return r;
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE')) throw new Error(`A user with email "${email}" already exists.`);
     throw new Error(`Failed to create user: ${err.message || err}`);
@@ -146,7 +159,9 @@ export async function createCustomer({ name, phone, alternate_phone, aadhaar, ad
        VALUES ($1,$2,$3,$4,$5,$6)`,
       [name.trim(), phone.trim(), alternate_phone || null, aadhaar || null, address || null, notes || null]
     );
-    return r.lastInsertId;
+    const id = r.lastInsertId;
+    await logActivity('CREATE', 'CUSTOMER', id, name, `Phone: ${phone}`);
+    return id;
   } catch (err) {
     throw new Error(`Failed to create customer: ${err.message || err}`);
   }
@@ -176,15 +191,26 @@ export async function searchCustomers(query) {
 
 export async function updateCustomer(id, { name, phone, alternate_phone, aadhaar, address, notes }) {
   _assertDb();
-  await db.execute(
-    `UPDATE customers SET name=$1, phone=$2, alternate_phone=$3, aadhaar=$4, address=$5, notes=$6 WHERE id=$7`,
-    [name.trim(), phone.trim(), alternate_phone || null, aadhaar || null, address || null, notes || null, id]
-  );
+  try {
+    await db.execute(
+      `UPDATE customers SET name=$1, phone=$2, alternate_phone=$3, aadhaar=$4, address=$5, notes=$6 WHERE id=$7`,
+      [name.trim(), phone.trim(), alternate_phone || null, aadhaar || null, address || null, notes || null, id]
+    );
+    await logActivity('UPDATE', 'CUSTOMER', id, name, `Phone: ${phone}`);
+  } catch (err) {
+    throw new Error(`Failed to update customer: ${err.message || err}`);
+  }
 }
 
 export async function deleteCustomer(id) {
   _assertDb();
-  await db.execute('DELETE FROM customers WHERE id = $1', [id]);
+  try {
+    const customer = await getCustomerById(id);
+    await db.execute('DELETE FROM customers WHERE id = $1', [id]);
+    if (customer) await logActivity('DELETE', 'CUSTOMER', id, customer.name, null);
+  } catch (err) {
+    throw new Error(`Failed to delete customer: ${err.message || err}`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -252,6 +278,7 @@ export async function updateProduct(id, { sku, name, category, weight_per_unit, 
       `UPDATE products SET sku=$1, name=$2, category=$3, weight_per_unit=$4, price_per_unit=$5 WHERE id=$6`,
       [sku.trim().toUpperCase(), name.trim(), category || null, Number(weight_per_unit) || 0, Number(price_per_unit) || 0, id]
     );
+    await logActivity('UPDATE', 'PRODUCT', id, name, `SKU: ${sku}`);
   } catch (err) {
     if (err.message && err.message.includes('UNIQUE')) {
       throw new Error(`SKU "${sku}" is already in use by another product.`);
@@ -332,6 +359,8 @@ export async function createSaleTransaction(data) {
       [data.dueAmount || 0, data.customerId]
     );
 
+    await logActivity('CREATE', 'TRANSACTION', txId, 'SALE', `Amount: ₹${data.finalCost}`);
+
     return txId;
   } catch (err) {
     throw new Error(`Sale transaction failed: ${err.message || err}`);
@@ -362,9 +391,47 @@ export async function createSettlementTransaction(data) {
       [data.amountPaid || 0, data.customerId]
     );
 
+    await logActivity('CREATE', 'TRANSACTION', txId, 'SETTLEMENT', `Amount: ₹${data.amountPaid}`);
+
     return txId;
   } catch (err) {
     throw new Error(`Settlement transaction failed: ${err.message || err}`);
+  }
+}
+
+export async function updateTransaction(id, { amount_paid, notes }) {
+  _assertDb();
+  try {
+    const tx = await getTransactionById(id);
+    if (!tx) throw new Error('Transaction not found');
+
+    const amountDelta = (Number(amount_paid) || 0) - (Number(tx.amount_paid) || 0);
+
+    // Update the transaction record
+    // Note: for SALE, due_amount = final_cost - amount_paid
+    // So if amount_paid increases, due_amount decreases.
+    const newDue = tx.type === 'SALE' ? Math.max(0, tx.final_cost - (Number(amount_paid) || 0)) : 0;
+
+    await db.execute(
+      `UPDATE transactions SET amount_paid=$1, notes=$2, due_amount=$3 WHERE id=$4`,
+      [Number(amount_paid) || 0, notes || null, newDue, id]
+    );
+
+    // Update customer balance:
+    // If it was a SALE: customer balance was increased by old due_amount.
+    // New total debt adjustment = (newDue - oldDue).
+    // If it was a SETTLEMENT: customer balance was decreased by old amount_paid.
+    // So update = -(newPaid - oldPaid).
+    if (tx.type === 'SALE') {
+      const dueDelta = newDue - tx.due_amount;
+      await db.execute('UPDATE customers SET balance = balance + $1 WHERE id = $2', [dueDelta, tx.customer_id]);
+    } else {
+      await db.execute('UPDATE customers SET balance = MAX(0, balance - $1) WHERE id = $2', [amountDelta, tx.customer_id]);
+    }
+
+    await logActivity('UPDATE', 'TRANSACTION', id, tx.type, `New Paid: ₹${amount_paid}`);
+  } catch (err) {
+    throw new Error(`Failed to update transaction: ${err.message || err}`);
   }
 }
 
@@ -530,4 +597,35 @@ export async function getRecentlySoldProducts(limit = 8) {
     [limit]
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACTIVITY LOGGING
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Log an activity to the database.
+ * @param {string} action — 'CREATE', 'UPDATE', 'DELETE'
+ * @param {string} entityType — 'CUSTOMER', 'PRODUCT', 'TRANSACTION', 'BUSINESS_PROFILE'
+ * @param {number|null} entityId
+ * @param {string|null} entityName
+ * @param {string|null} details
+ */
+export async function logActivity(action, entityType, entityId, entityName, details) {
+  _assertDb();
+  try {
+    await db.execute(
+      `INSERT INTO activity_log (action, entity_type, entity_id, entity_name, details)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [action, entityType, entityId, entityName, details]
+    );
+  } catch (err) {
+    console.warn('[DB] Activity log failed:', err);
+  }
+}
+
+export async function getActivities(limit = 100) {
+  _assertDb();
+  return db.select(`SELECT * FROM activity_log ORDER BY created_at DESC LIMIT $1`, [limit]);
+}
+
 

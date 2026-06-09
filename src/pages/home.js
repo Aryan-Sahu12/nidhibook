@@ -5,7 +5,7 @@
  * Shows business branding hero + recent transactions + recently sold products.
  */
 
-import { getRecentTransactions, getRecentlySoldProducts } from '../services/db.js';
+import { getRecentTransactions, getRecentlySoldProducts, getTransactionById } from '../services/db.js';
 import { getBusinessInfo } from './onboarding.js';
 import { navigateTo } from '../components/shell.js';
 
@@ -91,7 +91,19 @@ export async function renderHome(container) {
                     ? `<span class="fw-bold text-primary">₹${fmt(tx.final_cost)}</span>`
                     : `<span class="fw-bold text-emerald">₹${fmt(tx.amount_paid)}</span>`}
                       </td>
-                      <td class="text-muted text-sm">${fmtDateShort(tx.created_at)}</td>
+                      <td class="text-muted text-sm" style="display:flex;justify-content:space-between;align-items:center">
+                        ${fmtDateShort(tx.created_at)}
+                        <span>▼</span>
+                      </td>
+                    </tr>
+                    <tr class="expand-row" id="home-expand-${tx.id}">
+                      <td colspan="4">
+                        <div class="expand-inner" id="home-expand-inner-${tx.id}">
+                          <div class="expand-content" id="home-expand-content-${tx.id}">
+                            <div class="splash" style="min-height:60px;"><div class="splash-spinner"></div></div>
+                          </div>
+                        </div>
+                      </td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -139,14 +151,31 @@ export async function renderHome(container) {
     document.getElementById('home-view-all-btn')?.addEventListener('click', () => navigateTo('bill-history'));
     document.getElementById('home-view-inv-btn')?.addEventListener('click', () => navigateTo('inventory'));
 
-    // Click a transaction row → jump to bill history
-    container.querySelectorAll('.home-tx-row').forEach(row => {
-        row.addEventListener('click', () => navigateTo('bill-history'));
-    });
+    // Expandable transaction rows
+    const openRows = new Set();
+    container.querySelector('.card:first-child .table-wrapper tbody')?.addEventListener('click', async (e) => {
+        const row = e.target.closest('.home-tx-row');
+        if (!row) return;
+        const id = Number(row.dataset.id);
+        const inner = document.getElementById(`home-expand-inner-${id}`);
+        const content = document.getElementById(`home-expand-content-${id}`);
+        const indicator = row.querySelector('.text-muted span');
 
-    // Click a product row → jump to inventory
-    container.querySelectorAll('.home-prod-row').forEach(row => {
-        row.addEventListener('click', () => navigateTo('inventory'));
+        if (openRows.has(id)) {
+            inner.classList.remove('open');
+            openRows.delete(id);
+            if (indicator) indicator.textContent = '▼';
+        } else {
+            inner.classList.add('open');
+            openRows.add(id);
+            if (indicator) indicator.textContent = '▲';
+            try {
+                const tx = await getTransactionById(id);
+                content.innerHTML = renderExpandedDetails(tx);
+            } catch (err) {
+                content.innerHTML = `<p style="color:var(--clr-danger)">${err.message}</p>`;
+            }
+        }
     });
 }
 
@@ -156,4 +185,64 @@ function fmtDateShort(iso) {
     try {
         return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     } catch { return iso; }
+}
+
+function renderExpandedDetails(tx) {
+    if (!tx) return '<p>Not found.</p>';
+
+    const isSale = tx.type === 'SALE';
+    return `
+    <div style="display:grid;grid-template-columns:1fr 280px;gap:24px;">
+      <!-- Left: Items -->
+      <div>
+        <h4 class="mb-12">${isSale ? 'Products' : 'Settlement Details'}</h4>
+        ${isSale && tx.items && tx.items.length > 0 ? `
+          <table style="font-size:12px;">
+            <thead><tr>
+              <th>Product</th>
+              <th style="text-align:right">Qty</th>
+              <th style="text-align:right">Rate (₹)</th>
+              <th style="text-align:right">Total</th>
+            </tr></thead>
+            <tbody>
+              ${tx.items.map(item => {
+        const lineTotal = (item.quantity * item.rate) - item.discount;
+        return `<tr>
+                  <td>${esc(item.product_name)}</td>
+                  <td style="text-align:right">${fmt(item.quantity)}</td>
+                  <td style="text-align:right">₹${fmt(item.rate)}</td>
+                  <td style="text-align:right" class="fw-bold">₹${fmt(lineTotal)}</td>
+                </tr>`;
+    }).join('')}
+            </tbody>
+          </table>
+        ` : `
+          <p class="text-muted">Amount paid: ₹${fmt(tx.amount_paid)}</p>
+          ${tx.notes ? `<p class="text-muted mt-8">Notes: ${esc(tx.notes)}</p>` : ''}
+        `}
+      </div>
+
+      <!-- Right: Summary -->
+      ${isSale ? `
+        <div class="ledger-card" style="align-self:start;">
+          <h4 class="mb-12">Bill Summary</h4>
+          ${ledgerRow('Subtotal', `₹${fmt(tx.subtotal)}`)}
+          ${Number(tx.global_discount) > 0 ? ledgerRow('Discount', `−₹${fmt(tx.global_discount)}`) : ''}
+          <div class="ledger-row final-cost" style="margin-top:8px;">
+            <span class="ledger-final-label">Final Cost</span>
+            <span class="ledger-final-value" style="font-size:22px;">₹${fmt(tx.final_cost)}</span>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function ledgerRow(label, value) {
+    return `
+    <div class="ledger-row">
+      <span class="ledger-label">${label}</span>
+      <span class="ledger-value">${value}</span>
+    </div>
+  `;
 }

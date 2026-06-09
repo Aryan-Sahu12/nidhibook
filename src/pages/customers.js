@@ -10,6 +10,7 @@ import {
   getCustomerById, getCustomerTransactions, getCustomerLifetimeSpend,
 } from '../services/db.js';
 import { showToast } from '../components/toast.js';
+import { openTransactionModal } from './transactionModal.js';
 
 let debounceTimer = null;
 let tableDelegate = null;   // track listener so we can remove it
@@ -98,6 +99,9 @@ async function loadTable(query) {
             </td>
             <td>
               <div class="table-actions">
+                ${Number(c.balance) > 0
+      ? `<button class="btn btn-emerald btn-sm" data-action="settle" data-id="${c.id}">Settle</button>`
+      : ''}
                 <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${c.id}">Edit</button>
                 <button class="btn btn-danger btn-sm" data-action="delete" data-id="${c.id}"
                   data-balance="${c.balance}" data-name="${esc(c.name)}">Delete</button>
@@ -125,6 +129,12 @@ async function handleTableClick(e) {
 
   if (action === 'profile') {
     await openCustomerProfile(id);
+
+  } else if (action === 'settle') {
+    openTransactionModal(() => loadTable(document.getElementById('cust-search')?.value || ''), {
+      mode: 'SETTLEMENT',
+      customerId: id
+    });
 
   } else if (action === 'edit') {
     const c = await getCustomerById(id);

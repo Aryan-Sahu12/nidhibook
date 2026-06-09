@@ -24,7 +24,98 @@ export function getBusinessInfo() {
 }
 
 /**
- * Render the onboarding screen inside #app.
+ * Open the business setup modal for editing profile (name/logo).
+ * @param {Function} onSave — called after saving
+ */
+export function openBusinessSetupModal(onSave) {
+    const area = document.createElement('div');
+    area.id = 'ob-modal-root';
+    document.body.appendChild(area);
+
+    const { name: initialName, logo: initialLogo } = getBusinessInfo();
+
+    area.innerHTML = `
+    <div class="modal-backdrop" id="ob-backdrop">
+      <div class="modal" style="max-width:480px;padding:32px;">
+        <div style="text-align:center;margin-bottom:24px;">
+           <span class="modal-title" style="font-size:24px;">Business Profile</span>
+           <p class="text-muted text-sm mt-4">Update your branding</p>
+        </div>
+
+        <div id="ob-error" class="error-msg mb-16"></div>
+
+        <div class="form-group mb-20">
+          <label>Company Name *</label>
+          <input type="text" id="ob-company-name" value="${initialName || ''}" placeholder="Enter company name" />
+        </div>
+
+        <div class="form-group mb-24">
+          <label>Company Logo</label>
+          <div id="ob-drop-zone" class="ob-drop-zone" style="height:140px;" data-logo="${initialLogo || ''}">
+            ${initialLogo
+            ? `<img src="${initialLogo}" style="max-height:80px;max-width:140px;border-radius:8px;" /><p class="text-xs text-muted mt-8">Click to change</p>`
+            : `<div id="ob-drop-content">
+                     <div style="font-size:32px;margin-bottom:4px;opacity:0.5;">🖼</div>
+                     <p style="font-size:12px;color:var(--clr-text-muted);">Drag & drop or <span style="color:var(--clr-primary);cursor:pointer;" id="ob-browse-label">browse</span></p>
+                   </div>`
+        }
+          </div>
+          <input type="file" id="ob-file-input" accept="image/*" style="display:none;" />
+        </div>
+
+        <div style="display:flex;gap:12px;">
+          <button class="btn btn-ghost flex-1" id="ob-cancel-btn">Cancel</button>
+          <button class="btn btn-glow flex-1" id="ob-save-btn">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+    const close = () => area.remove();
+    document.getElementById('ob-cancel-btn').addEventListener('click', close);
+    document.getElementById('ob-backdrop').addEventListener('click', (e) => { if (e.target.id === 'ob-backdrop') close(); });
+
+    const dropZone = document.getElementById('ob-drop-zone');
+    const fileInput = document.getElementById('ob-file-input');
+
+    const preview = (file) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const base64 = e.target.result;
+            dropZone.innerHTML = `<img src="${base64}" style="max-height:80px;max-width:140px;border-radius:8px;" /><p class="text-xs text-muted mt-8">Click to change</p>`;
+            dropZone.dataset.logo = base64;
+        };
+        reader.readAsDataURL(file);
+    };
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) preview(fileInput.files[0]); });
+
+    document.getElementById('ob-save-btn').addEventListener('click', async () => {
+        const name = document.getElementById('ob-company-name').value.trim();
+        if (!name) {
+            const err = document.getElementById('ob-error');
+            err.textContent = 'Name is required.';
+            err.classList.add('visible');
+            return;
+        }
+        localStorage.setItem(STORAGE_KEY_NAME, name);
+        if (dropZone.dataset.logo) localStorage.setItem(STORAGE_KEY_LOGO, dropZone.dataset.logo);
+        localStorage.setItem(STORAGE_KEY_DONE, '1');
+
+        // Log profile update if db is available
+        try {
+            const { logActivity } = await import('../services/db.js');
+            await logActivity('UPDATE', 'BUSINESS_PROFILE', null, name, 'Updated via sidebar');
+        } catch (e) { }
+
+        close();
+        if (onSave) onSave();
+    });
+}
+
+/**
+ * Render the onboarding screen inside #app (original fullscreen version).
  * @param {Function} onComplete — called when user clicks "Save & Continue"
  */
 export function renderOnboarding(onComplete) {
@@ -32,131 +123,55 @@ export function renderOnboarding(onComplete) {
 
     app.innerHTML = `
     <div class="onboarding-wrapper">
-      <!-- Radial glow -->
       <div class="onboarding-glow"></div>
-
       <div class="onboarding-card card card-lg">
-        <!-- Header -->
         <div style="text-align:center;margin-bottom:32px;">
           <div class="sidebar-logo" style="margin:0 auto 20px;width:52px;height:52px;font-size:20px;">NB</div>
           <h1 style="font-size:28px;letter-spacing:-0.04em;margin-bottom:8px;">Welcome to NidhiBook</h1>
           <p class="text-muted">Set up your business profile to get started</p>
         </div>
-
         <div id="ob-error" class="error-msg mb-16"></div>
-
-        <!-- Company Name -->
         <div class="form-group mb-20">
           <label>Company Name *</label>
-          <input
-            type="text"
-            id="ob-company-name"
-            placeholder="Enter your company name"
-            style="font-size:16px;padding:14px 16px;"
-            autocomplete="organization"
-          />
+          <input type="text" id="ob-company-name" placeholder="Enter your company name" style="font-size:16px;padding:14px 16px;" />
         </div>
-
-        <!-- Logo upload -->
         <div class="form-group mb-24">
           <label>Company Logo <span class="text-muted text-sm">(optional)</span></label>
-          <div
-            id="ob-drop-zone"
-            class="ob-drop-zone"
-            tabindex="0"
-            role="button"
-            aria-label="Upload logo"
-          >
+          <div id="ob-drop-zone" class="ob-drop-zone" tabindex="0" role="button">
             <div id="ob-drop-content">
               <div style="font-size:36px;margin-bottom:8px;opacity:0.5;">🖼</div>
               <p style="font-size:13px;color:var(--clr-text-muted);">Drag &amp; drop or <span style="color:var(--clr-primary);cursor:pointer;" id="ob-browse-label">browse file</span></p>
-              <p class="text-xs text-muted mt-4">PNG, JPG, SVG • max 2 MB</p>
             </div>
           </div>
           <input type="file" id="ob-file-input" accept="image/*" style="display:none;" />
         </div>
-
-        <!-- CTA -->
-        <button class="btn btn-glow" id="ob-save-btn" style="width:100%;font-size:15px;padding:14px;">
-          Save &amp; Continue →
-        </button>
+        <button class="btn btn-glow" id="ob-save-btn" style="width:100%;font-size:15px;padding:14px;">Save &amp; Continue →</button>
       </div>
     </div>
   `;
 
-    // ── Logo Upload Logic ──────────────────────────────────────────
-
     const dropZone = document.getElementById('ob-drop-zone');
     const fileInput = document.getElementById('ob-file-input');
 
-    function previewFile(file) {
-        if (!file || !file.type.startsWith('image/')) {
-            showObError('Please upload a valid image file.');
-            return;
-        }
-        if (file.size > 2 * 1024 * 1024) {
-            showObError('Image must be under 2 MB.');
-            return;
-        }
+    const preview = (file) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             const base64 = e.target.result;
-            dropZone.innerHTML = `
-        <img src="${base64}" id="ob-logo-preview"
-          style="max-height:100px;max-width:180px;border-radius:10px;object-fit:contain;" />
-        <p class="text-xs text-muted mt-8" style="cursor:pointer;">Click to change</p>
-      `;
+            dropZone.innerHTML = `<img src="${base64}" style="max-height:100px;max-width:180px;border-radius:10px;object-fit:contain;" />`;
             dropZone.dataset.logo = base64;
         };
         reader.readAsDataURL(file);
-    }
-
-    document.getElementById('ob-browse-label').addEventListener('click', (e) => {
-        e.stopPropagation();
-        fileInput.click();
-    });
+    };
 
     dropZone.addEventListener('click', () => fileInput.click());
-
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files[0]) previewFile(fileInput.files[0]);
-    });
-
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.classList.add('drag-active');
-    });
-
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-active'));
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drag-active');
-        if (e.dataTransfer.files[0]) previewFile(e.dataTransfer.files[0]);
-    });
-
-    // ── Save ──────────────────────────────────────────────────────
+    fileInput.addEventListener('change', () => { if (fileInput.files[0]) preview(fileInput.files[0]); });
 
     document.getElementById('ob-save-btn').addEventListener('click', () => {
         const name = document.getElementById('ob-company-name').value.trim();
-        if (!name) {
-            showObError('Company name is required.');
-            document.getElementById('ob-company-name').focus();
-            return;
-        }
-
+        if (!name) return;
         localStorage.setItem(STORAGE_KEY_NAME, name);
-        const logo = dropZone.dataset.logo || null;
-        if (logo) localStorage.setItem(STORAGE_KEY_LOGO, logo);
+        if (dropZone.dataset.logo) localStorage.setItem(STORAGE_KEY_LOGO, dropZone.dataset.logo);
         localStorage.setItem(STORAGE_KEY_DONE, '1');
-
         onComplete();
     });
-
-    function showObError(msg) {
-        const el = document.getElementById('ob-error');
-        el.textContent = msg;
-        el.classList.add('visible');
-        setTimeout(() => el.classList.remove('visible'), 4000);
-    }
 }

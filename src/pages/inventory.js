@@ -63,9 +63,9 @@ async function loadTable(query) {
   area.innerHTML = `
     <table>
       <thead><tr>
-        <th>SKU</th>
         <th>Name</th>
         <th>Category</th>
+        <th>SKU</th>
         <th style="text-align:right">Wt/Unit (kg)</th>
         <th style="text-align:right">Price/Unit (₹)</th>
         <th>Actions</th>
@@ -73,9 +73,9 @@ async function loadTable(query) {
       <tbody>
         ${products.map(p => `
           <tr>
-            <td><span class="badge badge-muted">${esc(p.sku)}</span></td>
             <td class="fw-bold">${esc(p.name)}</td>
             <td class="text-muted">${p.category ? esc(p.category) : '—'}</td>
+            <td><span class="badge badge-muted">${esc(p.sku)}</span></td>
             <td style="text-align:right">${fmt(p.weight_per_unit)}</td>
             <td style="text-align:right">₹${fmt(p.price_per_unit)}</td>
             <td>
@@ -83,7 +83,6 @@ async function loadTable(query) {
                 <button class="btn btn-ghost btn-sm" data-action="edit" data-id="${p.id}">Edit</button>
               </div>
             </td>
-
           </tr>
         `).join('')}
       </tbody>
@@ -104,13 +103,26 @@ async function loadTable(query) {
   }
 }
 
-function openProductModal(product) {
-  const area = document.getElementById('inv-modal-area');
+/**
+ * Open the product creation/edit modal.
+ * @param {Object} product — product object to edit (or null for new)
+ * @param {Object} options — { onSuccess: function(newProduct), initialData: object }
+ */
+export function openProductModal(product, options = {}) {
+  let area = document.getElementById('inv-modal-area');
   const isEdit = !!product;
+  const initial = options.initialData || {};
+
+  // If not on inventory page, use a temporary container
+  if (!area) {
+    area = document.createElement('div');
+    area.id = 'temp-prod-modal-area';
+    document.body.appendChild(area);
+  }
 
   area.innerHTML = `
     <div class="modal-backdrop" id="prod-modal-backdrop">
-      <div class="modal" id="prod-modal">
+      <div class="modal" id="prod-modal" style="max-width:560px;">
         <div class="modal-header">
           <span class="modal-title">${isEdit ? 'Edit Product' : 'Add Product'}</span>
           <button class="modal-close" id="prod-modal-close">✕</button>
@@ -118,14 +130,16 @@ function openProductModal(product) {
         <div class="modal-body">
           <div id="prod-form-error" class="error-msg mb-12"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-            <div class="form-group">
-              <label>SKU <span class="text-muted text-sm">(auto-generated if blank)</span></label>
-              <input type="text" id="prod-sku" value="${isEdit ? esc(product.sku) : ''}" placeholder="e.g. RICE-84AB12" style="text-transform:uppercase" />
-            </div>
-            <div class="form-group"><label>Name *</label>
-              <input type="text" id="prod-name" value="${isEdit ? esc(product.name) : ''}" placeholder="Product name" /></div>
+            ${isEdit ? `
+              <div class="form-group">
+                <label>SKU</label>
+                <input type="text" id="prod-sku" value="${esc(product.sku)}" readonly style="background:rgba(255,255,255,0.04);cursor:not-allowed;" />
+              </div>
+            ` : `<input type="hidden" id="prod-sku" value="" />`}
+            <div class="form-group ${isEdit ? '' : 'span-2'}" style="${isEdit ? '' : 'grid-column:span 2'}"><label>Product Name *</label>
+              <input type="text" id="prod-name" value="${isEdit ? esc(product.name) : esc(initial.name || '')}" placeholder="Complete name of product" /></div>
             <div class="form-group"><label>Category</label>
-              <input type="text" id="prod-category" value="${isEdit && product.category ? esc(product.category) : ''}" placeholder="e.g. Grains, Pulses" /></div>
+              <input type="text" id="prod-category" value="${isEdit && product.category ? esc(product.category) : esc(initial.category || '')}" placeholder="e.g. Grains, Pulses" /></div>
             <div class="form-group"><label>Weight per Unit (kg)</label>
               <input type="number" id="prod-weight" value="${isEdit ? product.weight_per_unit : ''}" placeholder="0.00" step="0.001" min="0" /></div>
             <div class="form-group" style="grid-column:span 2"><label>Price per Unit (₹)</label>
@@ -154,7 +168,10 @@ function openProductModal(product) {
     });
   }
 
-  const close = () => { area.innerHTML = ''; };
+  const close = () => {
+    if (area.id === 'temp-prod-modal-area') area.remove();
+    else area.innerHTML = '';
+  };
   area.querySelector('#prod-modal-close').addEventListener('click', close);
   area.querySelector('#prod-cancel-btn').addEventListener('click', close);
   area.querySelector('#prod-modal-backdrop').addEventListener('click', (e) => {
@@ -180,12 +197,18 @@ function openProductModal(product) {
       if (isEdit) {
         await updateProduct(product.id, data);
         showToast('Product updated.', 'success');
+        if (options.onSuccess) options.onSuccess({ ...data, id: product.id });
       } else {
         const result = await createProduct(data);
         showToast(`Product created. SKU: ${result.sku}`, 'success');
+        if (options.onSuccess) options.onSuccess(result);
       }
       close();
-      await loadTable(document.getElementById('inv-search')?.value || '');
+
+      // Reload inventory table if present
+      const searchBox = document.getElementById('inv-search');
+      if (searchBox) await loadTable(searchBox.value || '');
+
     } catch (e) {
       showFormError(errEl, e.message);
     } finally {

@@ -14,14 +14,16 @@ import { renderDashboard } from '../pages/dashboard.js';
 import { renderCustomers } from '../pages/customers.js';
 import { renderInventory } from '../pages/inventory.js';
 import { renderBillHistory } from '../pages/billHistory.js';
+import { renderActivities } from '../pages/activities.js';
 import { openTransactionModal } from '../pages/transactionModal.js';
-import { renderOnboarding, isOnboarded, getBusinessInfo } from '../pages/onboarding.js';
+import { renderOnboarding, isOnboarded, getBusinessInfo, openBusinessSetupModal } from '../pages/onboarding.js';
 
 const NAV_ITEMS = [
   { id: 'home', label: 'Home', icon: '⌂' },
-  { id: 'customers', label: 'CRM', icon: '◉' },
+  { id: 'customers', label: 'Customers', icon: '◉' },
   { id: 'inventory', label: 'Inventory', icon: '▦' },
   { id: 'bill-history', label: 'Bill History', icon: '◎' },
+  { id: 'activities', label: 'Activities', icon: '🕔' },
   { id: 'dashboard', label: 'Dashboard', icon: '◈' },
 ];
 
@@ -60,14 +62,14 @@ async function mountShell(user) {
       <aside class="sidebar" id="app-sidebar">
 
         <!-- Brand  -->
-        <div class="sidebar-brand">
+        <div class="sidebar-brand" id="sidebar-brand-btn" style="cursor:pointer" title="Edit Business Profile">
           ${bizLogo
-      ? `<img src="${bizLogo}" alt="logo"
+      ? `<img src="${bizLogo}" id="sidebar-logo-img" alt="logo"
                 style="width:36px;height:36px;border-radius:10px;object-fit:contain;
                   border:1px solid var(--clr-border);background:rgba(255,255,255,0.04);padding:3px;flex-shrink:0;" />`
-      : `<div class="sidebar-logo">NB</div>`
+      : `<div class="sidebar-logo" id="sidebar-logo-placeholder">NB</div>`
     }
-          <span class="sidebar-brand-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <span class="sidebar-brand-text" id="sidebar-brand-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
             ${escapeHtml(bizName)}
           </span>
         </div>
@@ -130,6 +132,31 @@ async function mountShell(user) {
     });
   });
 
+  // ── Edit Profile Sidebar ─────────────────────────────────────
+  document.getElementById('sidebar-brand-btn').addEventListener('click', () => {
+    openBusinessSetupModal(async () => {
+      const { name, logo } = getBusinessInfo();
+      const nameEl = document.getElementById('sidebar-brand-name');
+      const logoImg = document.getElementById('sidebar-logo-img');
+      const logoPlaceholder = document.getElementById('sidebar-logo-placeholder');
+
+      if (nameEl) nameEl.textContent = name;
+      if (logo) {
+        if (logoImg) logoImg.src = logo;
+        else if (logoPlaceholder) {
+          logoPlaceholder.outerHTML = `<img src="${logo}" id="sidebar-logo-img" alt="Logo" class="sidebar-logo" style="width:36px;height:36px;object-fit:contain;background:rgba(255,255,255,0.05);padding:3px;" />`;
+        }
+      }
+
+      // Refresh home hero if on home page
+      if (currentPage === 'home') {
+        await navigateTo('home', true);
+      }
+
+      showToast('Profile updated successfully!', 'success');
+    });
+  });
+
   // ── Logout ───────────────────────────────────────────────────
   async function handleLogout() {
     try {
@@ -151,10 +178,11 @@ async function mountShell(user) {
 
 const PAGE_META = {
   'home': { title: 'Home', sub: 'Your business at a glance' },
-  'customers': { title: 'CRM', sub: 'Manage your customer relationships' },
+  'customers': { title: 'Customers', sub: 'Manage your customer relationships' },
   'inventory': { title: 'Inventory', sub: 'Products and pricing' },
-  'bill-history': { title: 'Bill History', sub: 'All transactions and settlements' },
-  'dashboard': { title: 'Dashboard', sub: 'Analytics & KPIs' },
+  'bill-history': { title: 'Bill History', sub: 'Transaction audit log' },
+  'activities': { title: 'Activities', sub: 'System activity & event log' },
+  'dashboard': { title: 'Dashboard', sub: 'Analytics and performance' },
 };
 
 export async function navigateTo(pageId, force = false) {
@@ -183,6 +211,7 @@ export async function navigateTo(pageId, force = false) {
     case 'customers': await renderCustomers(main); break;
     case 'inventory': await renderInventory(main); break;
     case 'bill-history': await renderBillHistory(main); break;
+    case 'activities': await renderActivities(main); break;
     case 'dashboard': await renderDashboard(main); break;
     default:
       main.innerHTML = `<div class="empty-state"><p>Page not found.</p></div>`;

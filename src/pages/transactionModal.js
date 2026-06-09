@@ -7,29 +7,31 @@
 
 import { getCustomers, getProducts, createSaleTransaction, createSettlementTransaction } from '../services/db.js';
 import { showToast } from '../components/toast.js';
+import { openProductModal } from './inventory.js';
 
 /**
  * Open the transaction modal.
  * @param {Function} onSuccess  — called after successful transaction (e.g. refresh parent page)
+ * @param {Object} options — optional { mode: 'SALE'|'SETTLEMENT', customerId: number }
  */
-export function openTransactionModal(onSuccess) {
-    const area = document.createElement('div');
-    area.id = 'tx-modal-root';
-    document.body.appendChild(area);
+export function openTransactionModal(onSuccess, options = {}) {
+  const area = document.createElement('div');
+  area.id = 'tx-modal-root';
+  document.body.appendChild(area);
 
-    const close = () => {
-        const backdrop = document.getElementById('tx-backdrop');
-        if (backdrop) {
-            backdrop.classList.add('closing');
-            setTimeout(() => {
-                area.remove();
-            }, 200);
-        } else {
-            area.remove();
-        }
-    };
+  const close = () => {
+    const backdrop = document.getElementById('tx-backdrop');
+    if (backdrop) {
+      backdrop.classList.add('closing');
+      setTimeout(() => {
+        area.remove();
+      }, 200);
+    } else {
+      area.remove();
+    }
+  };
 
-    area.innerHTML = `
+  area.innerHTML = `
     <div class="modal-backdrop" id="tx-backdrop">
       <div class="modal modal-fullscreen" id="tx-modal">
         <div class="modal-header">
@@ -54,51 +56,70 @@ export function openTransactionModal(onSuccess) {
     </div>
   `;
 
-    document.getElementById('tx-close-btn').addEventListener('click', close);
-    document.getElementById('tx-backdrop').addEventListener('click', (e) => {
-        if (e.target.id === 'tx-backdrop') close();
-    });
+  document.getElementById('tx-close-btn').addEventListener('click', close);
+  document.getElementById('tx-backdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'tx-backdrop') close();
+  });
 
-    let currentMode = 'SALE';
-    let customers = [];
-    let products = [];
+  let currentMode = options.mode || 'SALE';
+  let customers = [];
+  let products = [];
 
-    // Load data
-    Promise.all([getCustomers(), getProducts()]).then(([c, p]) => {
-        customers = c;
-        products = p;
-        renderMode('SALE');
-    }).catch(err => {
-        document.getElementById('tx-body').innerHTML =
-            `<p style="color:var(--clr-danger);padding:20px">${err.message}</p>`;
-    });
+  // Load data
+  Promise.all([getCustomers(), getProducts()]).then(([c, p]) => {
+    customers = c;
+    products = p;
 
-    // Mode switch
-    document.getElementById('mode-switch').addEventListener('click', (e) => {
-        const btn = e.target.closest('.mode-btn');
-        if (!btn || btn.dataset.mode === currentMode) return;
-        currentMode = btn.dataset.mode;
-        document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
-        renderMode(currentMode);
-    });
+    // Auto-select initial mode
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+    renderMode(currentMode);
 
-    // ─── RENDER FUNCTIONS ────────────────────────────────────────────────────────
-
-    function renderMode(mode) {
-        if (mode === 'SALE') renderSaleMode();
-        else renderSettlementMode();
+    // Auto-fill settlement customer if requested
+    if (currentMode === 'SETTLEMENT' && options.customerId) {
+      const presetCust = customers.find(c => c.id === options.customerId);
+      if (presetCust && Number(presetCust.balance) > 0) {
+        // Synthesize the dropdown selection callback execution
+        document.getElementById('sett-cust-search').value = presetCust.name;
+        settlementCustomerId = presetCust.id;
+        selectedCustomerBalance = Number(presetCust.balance);
+        document.getElementById('sett-cust-selected').style.display = 'inline-flex';
+        document.getElementById('sett-cust-selected').textContent = `✓ ${presetCust.name} — Debt: ₹${fmt(presetCust.balance)}`;
+        document.getElementById('sett-balance-display').style.display = 'block';
+        document.getElementById('sett-current-balance').textContent = `₹${fmt(presetCust.balance)}`;
+        recalcSettlement();
+      }
     }
+  }).catch(err => {
+    document.getElementById('tx-body').innerHTML =
+      `<p style="color:var(--clr-danger);padding:20px">${err.message}</p>`;
+  });
 
-    // ─── SALE MODE ────────────────────────────────────────────────────────────────
+  // Mode switch
+  document.getElementById('mode-switch').addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-btn');
+    if (!btn || btn.dataset.mode === currentMode) return;
+    currentMode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === currentMode));
+    renderMode(currentMode);
+  });
 
-    let saleItems = [];   // [{productId, name, sku, quantity, rate, discount}]
-    let saleCustomerId = null;
+  // ─── RENDER FUNCTIONS ────────────────────────────────────────────────────────
 
-    function renderSaleMode() {
-        saleItems = [];
-        saleCustomerId = null;
+  function renderMode(mode) {
+    if (mode === 'SALE') renderSaleMode();
+    else renderSettlementMode();
+  }
 
-        document.getElementById('tx-body').innerHTML = `
+  // ─── SALE MODE ────────────────────────────────────────────────────────────────
+
+  let saleItems = [];   // [{productId, name, sku, quantity, rate, discount}]
+  let saleCustomerId = null;
+
+  function renderSaleMode() {
+    saleItems = [];
+    saleCustomerId = null;
+
+    document.getElementById('tx-body').innerHTML = `
       <div class="tx-modal-body" style="padding:0;">
         <!-- LEFT COLUMN -->
         <div class="tx-col-left" style="display:flex;flex-direction:column;gap:20px;overflow-y:auto;max-height:70vh;padding-right:8px;">
@@ -206,69 +227,101 @@ export function openTransactionModal(onSuccess) {
       </div>
     `;
 
-        // ── Customer Autocomplete ───────────────────────────────────────────────
-        setupDropdown(
-            'sale-cust-search',
-            'sale-cust-list',
-            () => customers,
-            (c) => ({ id: c.id, primary: c.name, secondary: `${c.phone}${Number(c.balance) > 0 ? ` • Owes ₹${fmt(c.balance)}` : ''}` }),
-            (c) => {
-                saleCustomerId = c.id;
-                const el = document.getElementById('sale-cust-selected');
-                el.style.display = 'inline-flex';
-                el.textContent = `✓ ${c.name}`;
+    // ── Customer Autocomplete ───────────────────────────────────────────────
+    setupDropdown(
+      'sale-cust-search',
+      'sale-cust-list',
+      () => customers,
+      (c) => ({ id: c.id, primary: c.name, secondary: `${c.phone}${Number(c.balance) > 0 ? ` • Owes ₹${fmt(c.balance)}` : ''}` }),
+      (c) => {
+        saleCustomerId = c.id;
+        const el = document.getElementById('sale-cust-selected');
+        el.style.display = 'inline-flex';
+        el.textContent = `✓ ${c.name}`;
+      }
+    );
+
+    // ── Product Autocomplete ────────────────────────────────────────────────
+    setupDropdown(
+      'sale-prod-search',
+      'sale-prod-list',
+      () => products,
+      (p) => ({ id: p.id, primary: p.name, secondary: `SKU: ${p.sku} | ₹${fmt(p.price_per_unit)}/unit | ${fmt(p.weight_per_unit)}kg/unit` }),
+      (p) => {
+        addItem(p);
+        document.getElementById('sale-prod-search').value = '';
+      },
+      {
+        label: 'Add New Product',
+        onAction: (q) => {
+          openProductModal(null, {
+            initialData: { name: q },
+            onSuccess: (newProd) => {
+              // 1. Update local products list (cache)
+              if (!products.find(p => p.id === newProd.id)) {
+                products.push(newProd);
+              }
+
+              // 2. Populate search field for visual feedback
+              const searchInp = document.getElementById('sale-prod-search');
+              if (searchInp) {
+                searchInp.value = newProd.name;
+              }
+
+              // 3. Add to sale items list immediately
+              addItem(newProd);
+              showToast(`Added ${newProd.name} to transaction`, 'success');
+
+              // 4. Clear search after a tiny delay and focus
+              setTimeout(() => {
+                if (searchInp) {
+                  searchInp.value = '';
+                  searchInp.focus();
+                }
+              }, 100);
             }
-        );
+          });
+        }
+      }
+    );
 
-        // ── Product Autocomplete ────────────────────────────────────────────────
-        setupDropdown(
-            'sale-prod-search',
-            'sale-prod-list',
-            () => products,
-            (p) => ({ id: p.id, primary: p.name, secondary: `SKU: ${p.sku} | ₹${fmt(p.price_per_unit)}/unit | ${fmt(p.weight_per_unit)}kg/unit` }),
-            (p) => {
-                addItem(p);
-                document.getElementById('sale-prod-search').value = '';
-            }
-        );
+    // ── Live calculations on any input change ───────────────────────────────
+    ['s-global-discount', 's-transport-cost', 's-labour', 's-commission', 's-other', 's-amount-paid'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', recalculate);
+    });
 
-        // ── Live calculations on any input change ───────────────────────────────
-        ['s-global-discount', 's-transport-cost', 's-labour', 's-commission', 's-other', 's-amount-paid'].forEach(id => {
-            document.getElementById(id)?.addEventListener('input', recalculate);
-        });
+    document.getElementById('sale-submit-btn').addEventListener('click', handleSaleSubmit);
+  }
 
-        document.getElementById('sale-submit-btn').addEventListener('click', handleSaleSubmit);
+  function addItem(product) {
+    // Avoid duplicates
+    if (saleItems.find(i => i.productId === product.id)) {
+      showToast('Product already added. Adjust quantity below.', 'info');
+      return;
+    }
+    saleItems.push({
+      productId: product.id,
+      name: product.name,
+      sku: product.sku,
+      quantity: 1,
+      weight: product.weight_per_unit,
+      rate: product.price_per_unit,
+      discount: 0,
+    });
+    renderItemsList();
+  }
+
+  function renderItemsList() {
+    const list = document.getElementById('sale-items-list');
+    if (!list) return;
+
+    if (saleItems.length === 0) {
+      list.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;color:var(--clr-text-faint);font-size:13px;">Add products above</div>`;
+      recalculate();
+      return;
     }
 
-    function addItem(product) {
-        // Avoid duplicates
-        if (saleItems.find(i => i.productId === product.id)) {
-            showToast('Product already added. Adjust quantity below.', 'info');
-            return;
-        }
-        saleItems.push({
-            productId: product.id,
-            name: product.name,
-            sku: product.sku,
-            quantity: 1,
-            weight: product.weight_per_unit,
-            rate: product.price_per_unit,
-            discount: 0,
-        });
-        renderItemsList();
-    }
-
-    function renderItemsList() {
-        const list = document.getElementById('sale-items-list');
-        if (!list) return;
-
-        if (saleItems.length === 0) {
-            list.innerHTML = `<div class="empty-state" style="padding:20px;text-align:center;color:var(--clr-text-faint);font-size:13px;">Add products above</div>`;
-            recalculate();
-            return;
-        }
-
-        list.innerHTML = `
+    list.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 72px 80px 80px 32px;gap:6px;padding:6px 0;
         border-bottom:1px solid var(--clr-border);margin-bottom:4px;
         font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted);">
@@ -292,122 +345,122 @@ export function openTransactionModal(onSuccess) {
       `).join('')}
     `;
 
-        // Handle item field changes
-        list.querySelectorAll('.item-input').forEach(inp => {
-            inp.addEventListener('input', () => {
-                const idx = Number(inp.dataset.idx);
-                const field = inp.dataset.field;
-                saleItems[idx][field] = parseFloat(inp.value) || 0;
-                // Update weight from product per-unit * qty
-                if (field === 'quantity') {
-                    const prod = products.find(p => p.id === saleItems[idx].productId);
-                    if (prod) saleItems[idx].weight = (prod.weight_per_unit || 0) * saleItems[idx].quantity;
-                }
-                recalculate();
-            });
-        });
-
-        // Remove button
-        list.querySelectorAll('[data-remove]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                saleItems.splice(Number(btn.dataset.remove), 1);
-                renderItemsList();
-            });
-        });
-
-        recalculate();
-    }
-
-    function recalculate() {
-        const subtotal = saleItems.reduce((sum, item) => {
-            return sum + Math.max(0, (item.quantity * item.rate) - item.discount);
-        }, 0);
-
-        const transportCost = parseFloat(document.getElementById('s-transport-cost')?.value) || 0;
-        const labourCost = parseFloat(document.getElementById('s-labour')?.value) || 0;
-        const otherCost = parseFloat(document.getElementById('s-other')?.value) || 0;
-        const globalDiscount = parseFloat(document.getElementById('s-global-discount')?.value) || 0;
-        const commissionPct = parseFloat(document.getElementById('s-commission')?.value) || 0;
-        const amountPaid = parseFloat(document.getElementById('s-amount-paid')?.value) || 0;
-
-        const grossTotal = subtotal + transportCost + labourCost + otherCost;
-        const commissionAmount = grossTotal * (commissionPct / 100);
-        const finalCost = Math.max(0, grossTotal - globalDiscount);
-        const dueAmount = Math.max(0, finalCost - amountPaid);
-
-        setText('ledger-subtotal', `₹${fmt(subtotal)}`);
-        setText('ledger-transport', `₹${fmt(transportCost)}`);
-        setText('ledger-labour', `₹${fmt(labourCost)}`);
-        setText('ledger-other', `₹${fmt(otherCost)}`);
-        setText('ledger-commission', `₹${fmt(commissionAmount)} (${commissionPct}%)`);
-        setText('ledger-discount', `−₹${fmt(globalDiscount)}`);
-        setText('ledger-final-cost', `₹${fmt(finalCost)}`);
-        setText('ledger-paid', `₹${fmt(amountPaid)}`);
-        setText('ledger-due-amount', `₹${fmt(dueAmount)}`);
-
-        // Colorize due amount
-        const dueEl = document.getElementById('ledger-due-amount');
-        if (dueEl) dueEl.style.color = dueAmount > 0 ? 'var(--clr-rose)' : 'var(--clr-emerald)';
-    }
-
-    async function handleSaleSubmit() {
-        const errEl = document.getElementById('sale-error');
-        if (!saleCustomerId) { showFormError(errEl, 'Please select a customer.'); return; }
-        if (saleItems.length === 0) { showFormError(errEl, 'Please add at least one product.'); return; }
-
-        const subtotal = saleItems.reduce((s, i) => s + Math.max(0, (i.quantity * i.rate) - i.discount), 0);
-        const transportCost = parseFloat(document.getElementById('s-transport-cost')?.value) || 0;
-        const labourCost = parseFloat(document.getElementById('s-labour')?.value) || 0;
-        const otherCost = parseFloat(document.getElementById('s-other')?.value) || 0;
-        const globalDiscount = parseFloat(document.getElementById('s-global-discount')?.value) || 0;
-        const commissionPct = parseFloat(document.getElementById('s-commission')?.value) || 0;
-        const amountPaid = parseFloat(document.getElementById('s-amount-paid')?.value) || 0;
-        const totalWeight = saleItems.reduce((s, i) => s + (i.weight || 0), 0);
-
-        const grossTotal = subtotal + transportCost + labourCost + otherCost;
-        const commissionAmount = grossTotal * (commissionPct / 100);
-        const finalCost = Math.max(0, grossTotal - globalDiscount);
-        const dueAmount = Math.max(0, finalCost - amountPaid);
-
-        const btn = document.getElementById('sale-submit-btn');
-        btn.disabled = true;
-        btn.textContent = 'Processing…';
-
-        try {
-            await createSaleTransaction({
-                customerId: saleCustomerId,
-                items: saleItems,
-                totalWeight,
-                subtotal,
-                globalDiscount,
-                finalCost,
-                amountPaid,
-                dueAmount,
-                transportSource: document.getElementById('s-transport-src')?.value || null,
-                transportDestination: document.getElementById('s-transport-dst')?.value || null,
-                transportCost,
-                labourCost,
-                commissionPercentage: commissionPct,
-                commissionAmount,
-                otherCost,
-            });
-            showToast('Sale recorded successfully!', 'success');
-            close();
-            if (onSuccess) onSuccess();
-        } catch (err) {
-            showFormError(errEl, err.message);
-        } finally {
-            if (btn) { btn.disabled = false; btn.textContent = 'Record Sale'; }
+    // Handle item field changes
+    list.querySelectorAll('.item-input').forEach(inp => {
+      inp.addEventListener('input', () => {
+        const idx = Number(inp.dataset.idx);
+        const field = inp.dataset.field;
+        saleItems[idx][field] = parseFloat(inp.value) || 0;
+        // Update weight from product per-unit * qty
+        if (field === 'quantity') {
+          const prod = products.find(p => p.id === saleItems[idx].productId);
+          if (prod) saleItems[idx].weight = (prod.weight_per_unit || 0) * saleItems[idx].quantity;
         }
+        recalculate();
+      });
+    });
+
+    // Remove button
+    list.querySelectorAll('[data-remove]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        saleItems.splice(Number(btn.dataset.remove), 1);
+        renderItemsList();
+      });
+    });
+
+    recalculate();
+  }
+
+  function recalculate() {
+    const subtotal = saleItems.reduce((sum, item) => {
+      return sum + Math.max(0, (item.quantity * item.rate) - item.discount);
+    }, 0);
+
+    const transportCost = parseFloat(document.getElementById('s-transport-cost')?.value) || 0;
+    const labourCost = parseFloat(document.getElementById('s-labour')?.value) || 0;
+    const otherCost = parseFloat(document.getElementById('s-other')?.value) || 0;
+    const globalDiscount = parseFloat(document.getElementById('s-global-discount')?.value) || 0;
+    const commissionPct = parseFloat(document.getElementById('s-commission')?.value) || 0;
+    const amountPaid = parseFloat(document.getElementById('s-amount-paid')?.value) || 0;
+
+    const grossTotal = subtotal + transportCost + labourCost + otherCost;
+    const commissionAmount = grossTotal * (commissionPct / 100);
+    const finalCost = Math.max(0, grossTotal - globalDiscount);
+    const dueAmount = Math.max(0, finalCost - amountPaid);
+
+    setText('ledger-subtotal', `₹${fmt(subtotal)}`);
+    setText('ledger-transport', `₹${fmt(transportCost)}`);
+    setText('ledger-labour', `₹${fmt(labourCost)}`);
+    setText('ledger-other', `₹${fmt(otherCost)}`);
+    setText('ledger-commission', `₹${fmt(commissionAmount)} (${commissionPct}%)`);
+    setText('ledger-discount', `−₹${fmt(globalDiscount)}`);
+    setText('ledger-final-cost', `₹${fmt(finalCost)}`);
+    setText('ledger-paid', `₹${fmt(amountPaid)}`);
+    setText('ledger-due-amount', `₹${fmt(dueAmount)}`);
+
+    // Colorize due amount
+    const dueEl = document.getElementById('ledger-due-amount');
+    if (dueEl) dueEl.style.color = dueAmount > 0 ? 'var(--clr-rose)' : 'var(--clr-emerald)';
+  }
+
+  async function handleSaleSubmit() {
+    const errEl = document.getElementById('sale-error');
+    if (!saleCustomerId) { showFormError(errEl, 'Please select a customer.'); return; }
+    if (saleItems.length === 0) { showFormError(errEl, 'Please add at least one product.'); return; }
+
+    const subtotal = saleItems.reduce((s, i) => s + Math.max(0, (i.quantity * i.rate) - i.discount), 0);
+    const transportCost = parseFloat(document.getElementById('s-transport-cost')?.value) || 0;
+    const labourCost = parseFloat(document.getElementById('s-labour')?.value) || 0;
+    const otherCost = parseFloat(document.getElementById('s-other')?.value) || 0;
+    const globalDiscount = parseFloat(document.getElementById('s-global-discount')?.value) || 0;
+    const commissionPct = parseFloat(document.getElementById('s-commission')?.value) || 0;
+    const amountPaid = parseFloat(document.getElementById('s-amount-paid')?.value) || 0;
+    const totalWeight = saleItems.reduce((s, i) => s + (i.weight || 0), 0);
+
+    const grossTotal = subtotal + transportCost + labourCost + otherCost;
+    const commissionAmount = grossTotal * (commissionPct / 100);
+    const finalCost = Math.max(0, grossTotal - globalDiscount);
+    const dueAmount = Math.max(0, finalCost - amountPaid);
+
+    const btn = document.getElementById('sale-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Processing…';
+
+    try {
+      await createSaleTransaction({
+        customerId: saleCustomerId,
+        items: saleItems,
+        totalWeight,
+        subtotal,
+        globalDiscount,
+        finalCost,
+        amountPaid,
+        dueAmount,
+        transportSource: document.getElementById('s-transport-src')?.value || null,
+        transportDestination: document.getElementById('s-transport-dst')?.value || null,
+        transportCost,
+        labourCost,
+        commissionPercentage: commissionPct,
+        commissionAmount,
+        otherCost,
+      });
+      showToast('Sale recorded successfully!', 'success');
+      close();
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      showFormError(errEl, err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Record Sale'; }
     }
+  }
 
-    // ─── SETTLEMENT MODE ──────────────────────────────────────────────────────────
+  // ─── SETTLEMENT MODE ──────────────────────────────────────────────────────────
 
-    let settlementCustomerId = null;
-    let selectedCustomerBalance = 0;
+  let settlementCustomerId = null;
+  let selectedCustomerBalance = 0;
 
-    function renderSettlementMode() {
-        document.getElementById('tx-body').innerHTML = `
+  function renderSettlementMode() {
+    document.getElementById('tx-body').innerHTML = `
       <div style="max-width:520px;margin:0 auto;">
 
         <!-- Customer Selector -->
@@ -439,7 +492,10 @@ export function openTransactionModal(onSuccess) {
 
         <!-- Amount -->
         <div class="form-group mb-16">
-          <label>Amount Being Paid (₹) *</label>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <label style="margin:0">Amount Being Paid (₹) *</label>
+            <button class="btn btn-ghost btn-xs" id="sett-all-btn" style="color:var(--clr-primary); font-weight:600;">Settle All</button>
+          </div>
           <input type="number" id="sett-amount" value="0" min="0" step="0.01"
             style="font-size:20px;font-weight:800;color:var(--clr-primary);" />
         </div>
@@ -457,134 +513,166 @@ export function openTransactionModal(onSuccess) {
       </div>
     `;
 
-        // Customer selector — filter to debtors only
-        const debtors = customers.filter(c => Number(c.balance) > 0);
-        setupDropdown(
-            'sett-cust-search',
-            'sett-cust-list',
-            () => debtors.length > 0 ? debtors : customers,
-            (c) => ({ id: c.id, primary: c.name, secondary: `${c.phone} • Owes ₹${fmt(c.balance)}` }),
-            (c) => {
-                settlementCustomerId = c.id;
-                selectedCustomerBalance = Number(c.balance);
-                document.getElementById('sett-cust-selected').style.display = 'inline-flex';
-                document.getElementById('sett-cust-selected').textContent = `✓ ${c.name} — Debt: ₹${fmt(c.balance)}`;
-                document.getElementById('sett-balance-display').style.display = 'block';
-                document.getElementById('sett-current-balance').textContent = `₹${fmt(c.balance)}`;
-                recalcSettlement();
-            }
-        );
+    // Customer selector — filter to debtors only
+    const debtors = customers.filter(c => Number(c.balance) > 0);
+    setupDropdown(
+      'sett-cust-search',
+      'sett-cust-list',
+      () => debtors.length > 0 ? debtors : customers,
+      (c) => ({ id: c.id, primary: c.name, secondary: `${c.phone} • Owes ₹${fmt(c.balance)}` }),
+      (c) => {
+        settlementCustomerId = c.id;
+        selectedCustomerBalance = Number(c.balance);
+        document.getElementById('sett-cust-selected').style.display = 'inline-flex';
+        document.getElementById('sett-cust-selected').textContent = `✓ ${c.name} — Debt: ₹${fmt(c.balance)}`;
+        document.getElementById('sett-balance-display').style.display = 'block';
+        document.getElementById('sett-current-balance').textContent = `₹${fmt(c.balance)}`;
+        recalcSettlement();
+      }
+    );
 
-        document.getElementById('sett-amount')?.addEventListener('input', recalcSettlement);
-        document.getElementById('sett-submit-btn').addEventListener('click', handleSettlementSubmit);
-    }
-
-    function recalcSettlement() {
-        const paying = parseFloat(document.getElementById('sett-amount')?.value) || 0;
-        const remaining = Math.max(0, selectedCustomerBalance - paying);
-        setText('sett-paying-now', `₹${fmt(paying)}`);
-        setText('sett-remaining', `₹${fmt(remaining)}`);
-        const remEl = document.getElementById('sett-remaining');
-        if (remEl) remEl.style.color = remaining > 0 ? 'var(--clr-rose)' : 'var(--clr-emerald)';
-    }
-
-    async function handleSettlementSubmit() {
-        const errEl = document.getElementById('sett-error');
-        const amountPaid = parseFloat(document.getElementById('sett-amount')?.value) || 0;
-        if (!settlementCustomerId) { showFormError(errEl, 'Please select a customer.'); return; }
-        if (amountPaid <= 0) { showFormError(errEl, 'Amount must be greater than 0.'); return; }
-
-        const btn = document.getElementById('sett-submit-btn');
-        btn.disabled = true;
-        btn.textContent = 'Processing…';
-
-        try {
-            await createSettlementTransaction({
-                customerId: settlementCustomerId,
-                amountPaid,
-                notes: document.getElementById('sett-notes')?.value || null,
-            });
-            showToast('Settlement recorded!', 'success');
-            close();
-            if (onSuccess) onSuccess();
-        } catch (err) {
-            showFormError(errEl, err.message);
-        } finally {
-            if (btn) { btn.disabled = false; btn.textContent = 'Record Settlement'; }
+    document.getElementById('sett-all-btn')?.addEventListener('click', () => {
+      if (settlementCustomerId) {
+        const amtInput = document.getElementById('sett-amount');
+        if (amtInput) {
+          amtInput.value = selectedCustomerBalance;
+          recalcSettlement();
         }
+      } else {
+        showToast('Select a customer first', 'info');
+      }
+    });
+
+    document.getElementById('sett-amount')?.addEventListener('input', recalcSettlement);
+    document.getElementById('sett-submit-btn').addEventListener('click', handleSettlementSubmit);
+  }
+
+  function recalcSettlement() {
+    const paying = parseFloat(document.getElementById('sett-amount')?.value) || 0;
+    const remaining = Math.max(0, selectedCustomerBalance - paying);
+    setText('sett-paying-now', `₹${fmt(paying)}`);
+    setText('sett-remaining', `₹${fmt(remaining)}`);
+    const remEl = document.getElementById('sett-remaining');
+    if (remEl) remEl.style.color = remaining > 0 ? 'var(--clr-rose)' : 'var(--clr-emerald)';
+  }
+
+  async function handleSettlementSubmit() {
+    const errEl = document.getElementById('sett-error');
+    const amountPaid = parseFloat(document.getElementById('sett-amount')?.value) || 0;
+    if (!settlementCustomerId) { showFormError(errEl, 'Please select a customer.'); return; }
+    if (amountPaid <= 0) { showFormError(errEl, 'Amount must be greater than 0.'); return; }
+
+    const btn = document.getElementById('sett-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Processing…';
+
+    try {
+      await createSettlementTransaction({
+        customerId: settlementCustomerId,
+        amountPaid,
+        notes: document.getElementById('sett-notes')?.value || null,
+      });
+      showToast('Settlement recorded!', 'success');
+      close();
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      showFormError(errEl, err.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Record Settlement'; }
     }
+  }
 
-    // ─── HELPERS ─────────────────────────────────────────────────────────────────
+  // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-    function setupDropdown(inputId, listId, getItems, makeOption, onSelect) {
-        const inp = document.getElementById(inputId);
-        const list = document.getElementById(listId);
-        if (!inp || !list) return;
+  function setupDropdown(inputId, listId, getItems, makeOption, onSelect, actionConfig) {
+    const inp = document.getElementById(inputId);
+    const list = document.getElementById(listId);
+    if (!inp || !list) return;
 
-        function renderList(query) {
-            const all = getItems();
-            const q = query.toLowerCase().trim();
-            const filtered = q
-                ? all.filter(i => {
-                    const opt = makeOption(i);
-                    return opt.primary.toLowerCase().includes(q) || opt.secondary.toLowerCase().includes(q);
-                })
-                : all.slice(0, 20);
+    function renderList(query) {
+      const all = getItems();
+      const q = query.toLowerCase().trim();
+      const filtered = q
+        ? all.filter(i => {
+          const opt = makeOption(i);
+          return opt.primary.toLowerCase().includes(q) || opt.secondary.toLowerCase().includes(q);
+        })
+        : all.slice(0, 20);
 
-            if (filtered.length === 0) {
-                list.innerHTML = `<div class="dropdown-item text-muted">No results</div>`;
-            } else {
-                list.innerHTML = filtered.map(item => {
-                    const opt = makeOption(item);
-                    return `
-            <div class="dropdown-item" data-id="${opt.id}">
-              <div class="dropdown-item-name">${esc(opt.primary)}</div>
-              <div class="dropdown-item-sub">${esc(opt.secondary)}</div>
-            </div>
-          `;
-                }).join('');
-            }
-            list.style.display = 'block';
-
-            list.querySelectorAll('.dropdown-item').forEach(el => {
-                el.addEventListener('mousedown', (e) => {
-                    e.preventDefault();
-                    const id = Number(el.dataset.id);
-                    const found = getItems().find(i => i.id === id);
-                    if (found) {
-                        inp.value = makeOption(found).primary;
-                        list.style.display = 'none';
-                        onSelect(found);
-                    }
-                });
-            });
-        }
-
-        inp.addEventListener('input', () => renderList(inp.value));
-        inp.addEventListener('focus', () => renderList(inp.value));
-        inp.addEventListener('blur', () => setTimeout(() => { list.style.display = 'none'; }, 150));
-    }
-
-    function ledgerRowHtml(label, id) {
+      let html = filtered.map(item => {
+        const opt = makeOption(item);
         return `
+          <div class="dropdown-item" data-id="${opt.id}">
+            <div class="dropdown-item-name">${esc(opt.primary)}</div>
+            <div class="dropdown-item-sub">${esc(opt.secondary)}</div>
+          </div>
+        `;
+      }).join('');
+
+      if (actionConfig && q) {
+        html += `
+          <div class="dropdown-item action-item" id="${inputId}-action" style="border-top:1px solid var(--clr-border); background:rgba(20,184,166,0.05);">
+            <div class="dropdown-item-name" style="color:var(--clr-primary);">+ ${actionConfig.label}: "${esc(query)}"</div>
+            <div class="dropdown-item-sub">Create this product now</div>
+          </div>
+        `;
+      }
+
+      if (filtered.length === 0 && !actionConfig) {
+        list.innerHTML = `<div class="dropdown-item text-muted">No results</div>`;
+      } else {
+        list.innerHTML = html;
+      }
+      list.style.display = 'block';
+
+      if (actionConfig) {
+        const actBtn = document.getElementById(`${inputId}-action`);
+        actBtn?.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          list.style.display = 'none';
+          actionConfig.onAction(query);
+        });
+      }
+
+      list.querySelectorAll('.dropdown-item:not(.action-item)').forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const id = Number(el.dataset.id);
+          const found = getItems().find(i => i.id === id);
+          if (found) {
+            inp.value = makeOption(found).primary;
+            list.style.display = 'none';
+            onSelect(found);
+          }
+        });
+      });
+    }
+
+    inp.addEventListener('input', () => renderList(inp.value));
+    inp.addEventListener('focus', () => renderList(inp.value));
+    inp.addEventListener('blur', () => setTimeout(() => { list.style.display = 'none'; }, 150));
+  }
+
+  function ledgerRowHtml(label, id) {
+    return `
       <div class="ledger-row">
         <span class="ledger-label">${label}</span>
         <span class="ledger-value" id="${id}">₹0.00</span>
       </div>
     `;
-    }
+  }
 
-    function setText(id, text) {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    }
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
 
-    function showFormError(el, msg) {
-        if (!el) return;
-        el.textContent = msg;
-        el.classList.add('visible');
-        setTimeout(() => el.classList.remove('visible'), 5000);
-    }
+  function showFormError(el, msg) {
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('visible');
+    setTimeout(() => el.classList.remove('visible'), 5000);
+  }
 }
 
 function fmt(v) { return Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
