@@ -15,6 +15,7 @@ import { renderCustomers } from '../pages/customers.js';
 import { renderInventory } from '../pages/inventory.js';
 import { renderBillHistory } from '../pages/billHistory.js';
 import { renderActivities } from '../pages/activities.js';
+import { renderSettings, applyTheme, getTheme } from '../pages/settings.js';
 import { openTransactionModal } from '../pages/transactionModal.js';
 import { renderOnboarding, isOnboarded, getBusinessInfo, openBusinessSetupModal } from '../pages/onboarding.js';
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { id: 'bill-history', label: 'Bill History', icon: '◎' },
   { id: 'activities', label: 'Activities', icon: '🕔' },
   { id: 'dashboard', label: 'Dashboard', icon: '◈' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
 ];
 
 let currentPage = null;   // null = no page rendered yet
@@ -40,6 +42,9 @@ let currentUser = null;
  */
 export async function renderShell(user) {
   currentUser = user;
+
+  // Apply saved theme before rendering
+  applyTheme(getTheme());
 
   if (!isOnboarded()) {
     renderOnboarding(() => mountShell(user));
@@ -88,7 +93,7 @@ async function mountShell(user) {
         <!-- Footer -->
         <div class="sidebar-footer">
           <button class="nav-item" id="logout-btn">
-            <span class="nav-icon" id="logout-icon">⚙</span>
+            <span class="nav-icon">⏻</span>
             <span>Sign Out</span>
           </button>
         </div>
@@ -158,15 +163,55 @@ async function mountShell(user) {
   });
 
   // ── Logout ───────────────────────────────────────────────────
-  async function handleLogout() {
+  async function performLogout() {
     try {
       await logoutUser();
     } catch (err) {
       showToast(`Logout failed: ${err.message}`, 'error');
     }
   }
+
+  function handleLogout() {
+    // Show confirmation modal
+    const overlay = document.createElement('div');
+    overlay.id = 'logout-confirm-overlay';
+    overlay.style.cssText = `
+      position:fixed;inset:0;background:rgba(0,0,0,0.6);backdrop-filter:blur(6px);
+      display:flex;align-items:center;justify-content:center;z-index:9999;
+      animation:fadeIn 0.15s ease;
+    `;
+    overlay.innerHTML = `
+      <div style="
+        background:var(--clr-surface-solid);border:1px solid var(--clr-border);
+        border-radius:16px;padding:32px;max-width:380px;width:90%;
+        box-shadow:0 24px 80px rgba(0,0,0,0.5);text-align:center;
+        animation:slideUp 0.2s ease;
+      ">
+        <div style="font-size:40px;margin-bottom:16px;">⏻</div>
+        <h3 style="font-size:18px;font-weight:800;color:var(--clr-text);margin-bottom:8px;">Sign Out?</h3>
+        <p style="font-size:13px;color:var(--clr-text-muted);margin-bottom:28px;line-height:1.6;">
+          Are you sure you want to sign out of NidhiBook?
+        </p>
+        <div style="display:flex;gap:12px;">
+          <button id="logout-cancel-btn" class="btn btn-ghost" style="flex:1;">Cancel</button>
+          <button id="logout-confirm-btn" class="btn btn-danger" style="flex:1;">Sign Out</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const dismiss = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) dismiss(); });
+    document.getElementById('logout-cancel-btn').addEventListener('click', dismiss);
+    document.getElementById('logout-confirm-btn').addEventListener('click', async () => {
+      dismiss();
+      await performLogout();
+    });
+  }
+
   document.getElementById('logout-btn').addEventListener('click', handleLogout);
   document.getElementById('header-logout-btn').addEventListener('click', handleLogout);
+
 
   // ── Initial route ────────────────────────────────────────────
   await navigateTo('home', true);  // force=true bypasses the currentPage guard on first load
@@ -183,6 +228,7 @@ const PAGE_META = {
   'bill-history': { title: 'Bill History', sub: 'Transaction audit log' },
   'activities': { title: 'Activities', sub: 'System activity & event log' },
   'dashboard': { title: 'Dashboard', sub: 'Analytics and performance' },
+  'settings': { title: 'Settings', sub: 'Profile & Appearance' },
 };
 
 export async function navigateTo(pageId, force = false) {
@@ -213,6 +259,7 @@ export async function navigateTo(pageId, force = false) {
     case 'bill-history': await renderBillHistory(main); break;
     case 'activities': await renderActivities(main); break;
     case 'dashboard': await renderDashboard(main); break;
+    case 'settings': await renderSettings(main); break;
     default:
       main.innerHTML = `<div class="empty-state"><p>Page not found.</p></div>`;
   }

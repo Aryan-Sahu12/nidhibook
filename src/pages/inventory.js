@@ -201,7 +201,8 @@ export function openProductModal(product, options = {}) {
       } else {
         const result = await createProduct(data);
         showToast(`Product created. SKU: ${result.sku}`, 'success');
-        if (options.onSuccess) options.onSuccess(result);
+        // Merge db result (id, sku) with form data (name, weight, price, etc.)
+        if (options.onSuccess) options.onSuccess({ ...data, id: result.id, sku: result.sku });
       }
       close();
 
